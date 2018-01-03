@@ -1,0 +1,807 @@
+
+EDA Prosper Loan Data Analyzed by Costa Stamatinos
+========================================================
+
+  The dataset I am going to explore is the Prosper Loan Data provided for the course. The data has 113937 observations(loans), with 81 variables(loan number, rate, etc). While most of the data is numerical, 15 variables out of the 81 are vectors(non-numerical). The most ineresting variables at the start are concerned with the amount of money loaned, and the rates for repaying it. A sample was created for this analysis of 10000 random loans.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load}
+#Loading packages used
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(reshape2)
+library(tidyr)
+library(GGally)
+library(scales)
+library(RColorBrewer)
+library(xlsx)
+library(ggthemes)
+library(stringr)
+
+#Read csv in to data frame
+ldf <- read.csv("prosperLoanData.csv", na.strings=c("", "NA"), )
+
+#Change dates to date format
+ldf$LoanOriginationDate <- as.Date(ldf$LoanOriginationDate,
+                                        format = "%Y-%m-%d %H:%M:%S")
+ldf$ListingCreationDate <- as.Date(ldf$ListingCreationDate,
+                                        format = "%Y-%m-%d %H:%M:%S")
+ldf$ClosedDate <- as.Date(ldf$ClosedDate,
+                               format = "%Y-%m-%d %H:%M:%S")
+ldf$FirstRecordedCreditLine <- as.Date(ldf$FirstRecordedCreditLine,
+                               format = "%Y-%m-%d %H:%M:%S")
+ldf$DateCreditPulled <- as.Date(ldf$DateCreditPulled,
+                               format = "%Y-%m-%d %H:%M:%S")
+
+#Create sample for analysis
+set.seed(1515)
+samp_ldf <- ldf[sample(1:length(ldf$Term), 10000), ]
+```
+
+ 
+
+#### Summary of the Sample:
+
+This is a summary of the first nine variables.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Summary}
+#Summary of first nine columns
+summary(samp_ldf[1:9])
+```
+
+#### Duplicates and Exploring Loaners
+
+I noticed duplicate member keys and created a dataframe of just the repeat loaners and arranged it by member key and date. I also added a IsLoaner logic variable to the sample dataframe. The effects of having multiple loans with Prosper can now be explored two ways. Using the data frame to look at the details and using the variable to see general trends. The top loaner in the sample was intersting to look at. His prosper rating improved with each loan.
+
+
+Checking for duplicates in member keys. Member keys variable definition: The unique key that is associated with the borrower.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Loaners}
+#Checking number of duplicated member keys
+anyDuplicated(samp_ldf$MemberKey)
+```
+
+Table of the top six borowers id number and count of loans.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Top six member keys
+head(sort(table(samp_ldf$MemberKey), decreasing = T))
+```
+
+Creating a data frame of the top loaner to explore the multiple loaners data.
+
+```{r message=FALSE, warning=FALSE}
+
+#Create top loaner data frame to explore
+top_loaner <- subset(samp_ldf, MemberKey == "5AD03382187155131B956C2")
+top_loaner <- arrange(top_loaner, c(ListingCreationDate))
+top_loaner[c("LoanOriginationDate", "BorrowerRate", "Term", "EstimatedReturn",
+           "ProsperRating..numeric.", "CreditScoreRangeUpper",
+           "DebtToIncomeRatio")]
+```
+
+
+Creating a loners data frame and adding the IsLoaner to the sample.
+
+```{r message=FALSE, warning=FALSE}
+#Create a data frame subset of only people with multiple loans
+templist <- subset(data.frame(sort(table(samp_ldf$MemberKey), decreasing = T)),
+                  Freq > 1)
+loaners <- subset(samp_ldf, MemberKey %in% templist[[1]])
+loaners <- arrange(loaners, loaners$MemberKey, loaners$LoanOriginationDate)
+
+#Create a logical variable in the sample for serial loaners,  True/False
+samp_ldf$IsLoaner <- samp_ldf$MemberKey %in% loaners$MemberKey
+```
+
+
+The average change in Prosper rating for people who borrowed multiple times. Prosper rating variable definition: The  Prosper Rating assigned at the time the listing was created: 0-N/A, 1-HR, 2-E, 3-D, 4-C, 5-B, 6-A, 7-AA.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+changeinprosp <- loaners %>% 
+                filter(!is.na(ProsperRating..numeric.)) %>%
+                group_by(MemberKey)  %>%
+                summarise(ProspChange = tail(ProsperRating..numeric., n = 1) -
+                            head(ProsperRating..numeric., n = 1)) %>%
+                summarise(avgchange = mean(ProspChange))
+changeinprosp[[1]]
+```
+
+It seems that on average lenders Prosper score increased the more loans they had with Prosper. More exploration is preformed below.
+
+#### Factors and Numerical Data
+
+The data is split up into two groups, factors and numerical data. The factored data is looked at first being composed of only 15 variables. It is also discrete and is plotted using bar plots and columns. The numerical data can be analyzed further with built in functions and histograms.
+
+
+Count and fifteen of the factored variables.
+
+```{r message=FALSE, warning=FALSE, Variables}
+#Counting then listing variables that are factors
+table(sapply(samp_ldf, is.factor))
+head(sort(sapply(samp_ldf, is.factor), decreasing = T), n = 15)
+```
+
+Count and fifteen of the numerical variables.
+
+```{r message=FALSE, warning=FALSE}
+
+#Counting then listing variables that are numeric
+table(sapply(samp_ldf, is.numeric))
+head(sort(sapply(samp_ldf, is.numeric), decreasing = T), n = 15)
+```
+
+## Univariate Plots Section
+
+Single variable plots of vectors. The data on serial loaners looked interesting, and was plotted with a few variables to compare.
+
+#### Non-Numerical Data
+
+Summary of credit grade along with plots from the sample and loaners data frame. Credit grade variable definition: The Credit rating that was assigned at the time the listing went live. Applicable for listings pre-2009 period and will only be populated for those listings.
+
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE, Non-Numerical-Data}
+#Summary of credit grade
+summary(samp_ldf$CreditGrade)
+
+#Plot of credit grade and combined with loaner data
+cglimits <- c("AA", "A", "B", "C", "D", "E", "HR", "NC")
+
+p1 <- ggplot(data = samp_ldf, aes(CreditGrade)) +
+  geom_bar(na.rm = T) +
+  scale_x_discrete(limits = cglimits)
+p1
+
+p2 <- ggplot(data = loaners, aes(CreditGrade)) +
+  geom_bar(na.rm = T) +
+  scale_x_discrete(limits = cglimits) +
+  xlab("CreditGrade(loaners data)")
+
+grid.arrange(p1, p2)
+```
+
+Summary of loan status along with plots from the sample and loaners data frame. Loan status variable definition: The current status of the loan: Cancelled,  Chargedoff, Completed, Current, Defaulted, FinalPaymentInProgress, PastDue. The PastDue status will be accompanied by a delinquency bucket.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Summary of loan status and subsequent plots
+summary(samp_ldf$LoanStatus)
+
+lslimits <- c("Current", "Completed", "Chargedoff",
+                  "Defaulted", "Past Due (1-15 days)", "Past Due (16-30 days)",
+                      "Past Due (31-60 days)", "Past Due (61-90 days)",
+                      "Past Due (91-120 days)", "Past Due (>120 days)")
+lslabels <- str_wrap(lslimits, width = 10)
+
+p3 <- ggplot(data = samp_ldf, aes(LoanStatus)) +
+  geom_bar(na.rm = T) +
+  scale_y_sqrt(breaks = c(10, 100, 500, 1000, 2000, 5000)) +
+  scale_x_discrete(limits = lslimits, labels = lslabels)
+p3
+
+#Plots of loan status with loaners data
+p4 <- ggplot(data = loaners, aes(LoanStatus)) +
+  geom_bar(na.rm = T) +
+  scale_y_sqrt(breaks = c(1, 2, 3, 5, 10, 15, 100, 105)) +
+  scale_x_discrete(limits = lslimits,
+                  labels = lslabels)+
+  xlab("LoanStatus(loaners data)")
+
+grid.arrange(p3, p4)
+```
+
+The loaners data doesn't appear too interesting here. I'll look at it again in multivariate plots.
+
+Sorted tables of borrower state and occupation. Plots of the top ten of each.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Head and plots of borrower states
+head(sort(table(samp_ldf$BorrowerState), decreasing = T), n = 10)
+
+#Create a sorted data frame of states
+top_states <- data.frame(sort(table(samp_ldf$BorrowerState), , decreasing = T))
+
+#Plot top sorted states
+ggplot(data = subset(top_states, Freq > 262), aes(Var1, Freq)) +
+  geom_col() +
+  xlab("States")
+
+#Head of occupation and subsequent plots
+head(sort(table(samp_ldf$Occupation), decreasing = T), n = 10)
+
+top_occ <- data.frame(sort(table(samp_ldf$Occupation), , decreasing = T))
+oclabels <- c("Other", "Professional", "Computer Programmer", "Executive",
+              "Teacher", "Administrative Assistant", "Analyst",
+              "Sales-Commission", "Accountant/CPA", "Clerical")
+oclabels <- str_wrap(oclabels, width = 10)
+
+ggplot(data = subset(top_occ, Freq > 250), aes(Var1, Freq)) +
+  geom_col() +
+  scale_x_discrete(labels = oclabels)+
+  xlab("Occupation")
+```
+
+Three plots of binary variables.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Three binary plots
+ggplot(data = samp_ldf, aes(IsBorrowerHomeowner)) +
+  geom_bar()
+
+ggplot(data = samp_ldf, aes(CurrentlyInGroup)) +
+  geom_bar()
+
+ggplot(data = samp_ldf, aes(IncomeVerifiable)) +
+  geom_bar()
+```
+
+Last two non numerical plots of interest.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Last two meaningful plots
+top_emp <- data.frame(sort(table(samp_ldf$EmploymentStatus), , decreasing = T))
+irlimits <- c("$0", "$1-24,999", "$25,000-49,999", "$50,000-74,999",
+              "$75,000-99,999","$100,000+", "Not displayed", "Not employed")
+irlabels <- str_wrap(gsub("-", "- ", irlimits), width = 5)
+
+ggplot(data = top_emp, aes(Var1, Freq)) +
+  geom_col() +
+  scale_y_sqrt(breaks = c(100, 250, 500, 1000, 2000, 6000))+
+  xlab("EmploymentStatus")
+
+ggplot(data = samp_ldf, aes(sort(IncomeRange))) +
+  geom_bar(na.rm = T) +
+  scale_x_discrete(limits = irlimits,
+                   labels = irlabels) +
+  scale_y_continuous(breaks = seq(0, 3000, 500))+
+  xlab("IncomeRange")
+```
+
+#### Numerical Data
+
+There are a large number of numerical variables but there appear to be only a few worth lookin at. Below are summaries and plots of numerical data that might be interesting.
+
+Summary and histogram of loan origination date.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plots of listing creation date
+summary(samp_ldf$LoanOriginationDate)
+
+ggplot(data = samp_ldf, aes(LoanOriginationDate)) +
+  geom_histogram(binwidth = 365)
+```
+
+Summary and bar graph of term.Term variable definition: The length of the loan expressed in months.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plots of term
+summary(samp_ldf$Term)
+
+ggplot(data = samp_ldf, aes(as.factor(Term))) +
+  geom_bar() +
+  scale_y_sqrt()+
+  xlab("Term")
+```
+
+Summary and histogram of borrower rate. Borrower rate variable definition: The Borrower's interest rate for this loan. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plot of borrower rate
+summary(samp_ldf$BorrowerRate)
+
+ggplot(data = samp_ldf, aes(BorrowerRate)) +
+  geom_histogram(bins = 30)
+```
+
+Histograms of yield, loss and return. These variables all have to do with the ratio the lender expects to gain or lose. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Plots for yield, loss and return
+ggplot(data = samp_ldf, aes(EstimatedEffectiveYield)) +
+  geom_histogram(bins = 30)
+
+ggplot(data = samp_ldf, aes(LenderYield)) +
+  geom_histogram(bins = 30)
+
+ggplot(data = samp_ldf, aes(EstimatedLoss)) +
+  geom_histogram(bins = 30)
+
+ggplot(data = samp_ldf, aes(EstimatedReturn)) +
+  geom_histogram(bins = 30)
+```
+
+Summary and histogram of employment durration. Emploment status durration variable definition: The length in months of the employment status at the time the listing was created.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(samp_ldf$EmploymentStatusDuration)
+#Plots for employment durration
+ggplot(data = samp_ldf, aes(EmploymentStatusDuration)) +
+  geom_histogram(bins = 30) +
+  scale_x_sqrt()
+
+```
+
+Summary and histograms of credit data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plot of credit data
+summary(samp_ldf$CreditScoreRangeLower)
+ggplot(data = samp_ldf, aes(CreditScoreRangeLower)) +
+  geom_histogram(binwidth = 20) +
+  scale_x_continuous(limits = c(400, 900))
+
+ggplot(data = samp_ldf, aes(FirstRecordedCreditLine)) +
+  geom_histogram(bins = 30)
+
+ggplot(data = samp_ldf, aes(CurrentCreditLines)) +
+  geom_histogram(bins = 30)
+
+ggplot(data = samp_ldf, aes(TotalCreditLinespast7years)) +
+  geom_histogram(bins = 30)
+```
+
+Summary and histograms of loan amounts and payments.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plots of amounts and payments
+summary(samp_ldf$LoanOriginalAmount)
+
+ggplot(data = samp_ldf, aes(LoanOriginalAmount)) + 
+  geom_histogram(bins = 30) +
+  scale_y_sqrt()
+
+summary(ldf$MonthlyLoanPayment)
+
+ggplot(data = samp_ldf, aes(MonthlyLoanPayment)) + 
+  geom_histogram(binwidth = 50) +
+  scale_x_continuous(limits = c(0, 1500), breaks = seq(0, 1500, 100))
+```
+
+Summary and plots of income related data.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Summary and plots of other income related data
+summary(samp_ldf$StatedMonthlyIncome)
+
+ggplot(data = samp_ldf, aes(StatedMonthlyIncome)) + 
+  geom_histogram(binwidth = 500) +
+  scale_x_continuous(limits = c(0, 15000))
+
+ggplot(data = samp_ldf, aes(DebtToIncomeRatio)) +
+  geom_histogram(bins = 30) +
+  scale_x_log10(breaks = c(.01, .02, .05,
+                           .1, .2, .3, .5, 1))
+
+ggplot(data = samp_ldf, aes(DelinquenciesLast7Years)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_continuous(limits = c(0, 20)) +
+  scale_y_continuous(limits = c(0, 400), breaks = seq(0, 400, 100))
+
+
+summary(samp_ldf$BorrowerRate)
+```
+
+# Univariate Analysis
+
+That is one large data set! Out of the 81 variables many were related to each other. This was the most ineresting bunch, and I can't show all of them. With the proper tools and more time all 81 could be compared and evaluated, but I'll stick with what i found.
+
+### What is the structure of your dataset?
+
+The data was in csv format originally and then tranfered to a data frame for this project. Again there are 113937 observations of 81 variables. I have listed a few of the definitions for the more obscure variables, and more can be found in the variable definition xml file with the data set. Here are a few statistics of the sample.
+
+Most borrowers pay they're loans on time. \
+California has by far the most borrowers. \
+Loan data is between 2006 and 2015. \
+77% of loans were for 36 months. \
+The mean Borrower rate was 0.1921.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+Since the data set is concerned with money, the obvious interest lies in who's getting how much. Borrowers are interested in how much they can get and their monthy payment. Lenders are interested in how much they will get in terms of yield, return, and loss.
+
+### What other features in the dataset do you think will help support your \
+
+investigation into your feature(s) of interest?
+Some variables are constructed using other variables, so natural correlation will be easily visable in those. I choose ones that stand out the best visually to compare with others. Again dealing with money, numericl variables will be the place to start, but it will be interesting to see how factored variables effect the money.
+
+### Did you create any new variables from existing variables in the dataset?
+
+Yes, several to explore duplicates in member keys, and several to help plot interesting data.
+
+### Of the features you investigated, were there any unusual distributions? \
+Did you perform any operations on the data to tidy, adjust, or change the form \
+of the data? If so, why did you do this?
+
+Yes. The factored data especially, was arranged alphabetically or numerically instead of the disired way. Or to see changes over time for the loaners data.
+
+
+# Bivariate Plots Section
+
+I created a correlation matrix of a few variables to start the exploration of multiple variables. It yielded a few interesting observations.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Correlation}
+#Create correlation matrix of several columns
+# ggpairs(samp_ldf[ , c("LoanOriginationDate", "BorrowerAPR", "LenderYield",
+#                      "EstimatedLoss", "LoanOriginalAmount", "Term",
+#                      "MonthlyLoanPayment", "ProsperRating..numeric.",
+#                      "CreditScoreRangeLower", "DelinquenciesLast7Years")])
+```
+
+Creating logical matrix of high and medium correlated numerical variables. Then I created a data frame of the results for easy viewing. First all variables with correlation greater than .75.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Create logical correlation matrix of numeric data
+x <- samp_ldf[,unlist(lapply(samp_ldf, is.numeric))]
+x <- cor(x, use = "pairwise.complete.obs")
+x[lower.tri(x)] <- 0
+diag(x) <- 0
+
+#Highly correlated variables
+highcor <- x > .75
+highcor <- data.frame(which(highcor == TRUE, arr.ind=TRUE, useNames = TRUE))
+highcor$row <- names(samp_ldf)[highcor$row]
+highcor$col <- names(samp_ldf)[highcor$col]
+highcor <- arrange(highcor, row)
+highcor
+```
+
+All variables with correlation between .5 and .75.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Medium correlated variables
+medcor <- x > .5 & x < .75
+medcor <- data.frame(which(medcor == TRUE, arr.ind=TRUE, useNames = TRUE))
+medcor$row <- names(samp_ldf)[medcor$row]
+medcor$col <- names(samp_ldf)[medcor$col]
+medcor <- arrange(medcor, row)
+medcor
+```
+
+Something about carrelated vars, and maybe a cor.test of a few.
+
+I started with comparing some of the most interesting variables with the IsLoaner variable.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Comparing-Loaners}
+#Plots of serial loaners vs other variables
+ggplot(data = samp_ldf, aes(IsLoaner, LenderYield)) +
+  geom_boxplot() +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$LenderYield, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(IsLoaner, BorrowerRate)) +
+  geom_boxplot() +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$BorrowerRate, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(IsLoaner, EstimatedLoss)) +
+  geom_boxplot() +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(IsLoaner, LoanOriginalAmount)) +
+  geom_boxplot() +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$LoanOriginalAmount, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(IsLoaner, MonthlyLoanPayment)) +
+  geom_boxplot() +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$MonthlyLoanPayment, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(IsLoaner, ProsperRating..numeric.)) +
+  geom_boxplot()
+```
+
+Point plots of borrower rate vs lender yield and estimated yield.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Comparing-Highly-Related}
+ggplot(data = samp_ldf, aes(ListingCreationDate, BorrowerAPR)) +
+  geom_point()
+
+#Plots of borrower data vs lender data
+ggplot(data = samp_ldf, aes(BorrowerRate, LenderYield)) +
+  geom_point()
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedEffectiveYield)) +
+  geom_point()
+```
+
+Point plots of borrower rate and APR vs estimated loss.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss)) +
+  geom_point()
+
+ggplot(data = samp_ldf, aes(BorrowerAPR, EstimatedLoss)) +
+  geom_point()
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss)) +
+  geom_point() +
+  geom_smooth(color = "red", size = 2)
+
+ggplot(data = samp_ldf, aes(BorrowerAPR, EstimatedLoss)) +
+  geom_point() +
+  geom_smooth(color = "red", size = 2)
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss)) +
+  geom_point() +
+  scale_y_sqrt() +
+  scale_x_sqrt() +
+  geom_smooth(color = "red", size = 2)
+
+ggplot(data = samp_ldf, aes(BorrowerAPR, EstimatedLoss)) +
+  geom_point() +
+  scale_y_sqrt() +
+  scale_x_sqrt() +
+  geom_smooth(color = "red", size = 2)
+
+ggplot(data = samp_ldf, aes(BorrowerAPR, EstimatedLoss)) +
+  geom_point() +
+  scale_x_sqrt(lim = c(0, quantile(samp_ldf$BorrowerAPR, .99,
+                                         na.rm = T))) +
+  scale_y_sqrt(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T))) +
+  geom_smooth(color = "red", size = 2)
+```
+
+Point plots of loan amount vs monthly payment. Also a point plot of loan number vs listing number.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#Plot of amount loaned vs monthly payment
+ggplot(data = samp_ldf, aes(LoanOriginalAmount, MonthlyLoanPayment)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$LoanOriginalAmount, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$MonthlyLoanPayment, .99,
+                                         na.rm = T)))
+
+#Plot of loan number vs listing number
+ggplot(data = samp_ldf, aes(LoanNumber, ListingNumber)) +
+  geom_point()
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Comparing-Mildly-Related}
+#Plots of prosper data
+ggplot(data = samp_ldf, aes(ProsperRating..numeric., CreditScoreRangeLower)) +
+  geom_point() +
+  scale_y_continuous(limits = c(600, 880))
+
+ggplot(data = samp_ldf, aes(TotalProsperLoans, ProsperPrincipalBorrowed)) +
+  geom_point()
+
+#Plots of payments and investors
+ggplot(data = samp_ldf, aes(LP_CustomerPayments, Investors)) +
+  geom_point() +
+  geom_smooth(method = 'gam')
+
+```
+
+# Bivariate Analysis
+
+Top .9 correlations to look at
+lender yield and loss vs borrower apr and rate
+original amount vs monthly payments
+loan number vs listing number
+
+top .5 to .9 correlations
+credit score vs prosper rating num
+prosper principal vs prosper total loans
+loan currentdays delinquent vs lp-loss
+recomendation vs invest from friend
+investors vs lp costomer payments
+
+
+
+> **Tip**: As before, summarize what you found in your bivariate explorations
+here. Use the questions below to guide your discussion.
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. How did the feature(s) of interest vary with other features in \
+the dataset?
+
+### Did you observe any interesting relationships between the other features \
+(not the main feature(s) of interest)?
+
+### What was the strongest relationship you found?
+
+
+# Multivariate Plots Section
+
+> **Tip**: Now it's time to put everything together. Based on what you found in
+the bivariate plots section, create a few multivariate plots to investigate
+more complex interactions between variables. Make sure that the plots that you
+create here are justified by the plots you explored in the previous section. If
+you plan on creating any mathematical models, this is the section where you
+will do that.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Coloring-Rate}
+#Plots of rate and yield/loss colored by other variables
+#Playing with colors for graphs
+myPalette <- colorRampPalette(rev(brewer.pal(4, "Spectral")))
+
+ggplot(data = subset(samp_ldf, !is.na(ProsperRating..numeric.)), aes(BorrowerRate, LenderYield,
+                            color = ProsperRating..numeric.)) +
+  geom_point() +
+  scale_colour_gradientn(colours = myPalette(100), 
+                         guide = guide_legend(title = 'ProsperRating',
+                                                  reverse = T,
+                                                  override.aes = 
+                                                    list(alpha = 1, size = 2)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedEffectiveYield,
+                            color = ProsperRating..numeric.)) +
+  geom_point() +
+  scale_colour_gradientn(colours = myPalette(100), 
+                         guide = guide_legend(title = 'ProsperRating',
+                                                  reverse = T,
+                                                  override.aes = 
+                                                    list(alpha = 1, size = 2)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedEffectiveYield,
+                            color = CreditScoreRangeLower)) +
+  geom_point() +
+  scale_colour_gradientn(colours =
+                           colorRampPalette(brewer.pal(3,"Spectral"))(100),
+                         limits = c(600, 850),
+                         guide = guide_legend(title = 'CreditScore',
+                                                  reverse = T,
+                                                  override.aes = 
+                                                    list(alpha = 1, size = 2)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedEffectiveYield,
+                            color = Term)) +
+  geom_point() +
+  scale_color_gradientn(colors = rainbow(4))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedEffectiveYield,
+                            color = IsLoaner)) +
+  geom_point() +
+  scale_color_brewer(palette = "Spectral")
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss,
+                            color = ProsperRating..numeric.)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$BorrowerRate, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T))) +
+  scale_colour_gradientn(colours =
+                           colorRampPalette(brewer.pal(7,"Spectral"))(100),
+                         guide = guide_legend(title = 'ProsperRating',
+                                                  reverse = T,
+                                                  override.aes = 
+                                                    list(alpha = 1, size = 2)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss,
+                            color = DebtToIncomeRatio)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$BorrowerRate, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T))) +
+  scale_colour_gradientn(colours =
+                           colorRampPalette(brewer.pal(10,"Spectral"))(100),
+                         limits = c(0, 1),
+                         guide = guide_legend(title = 'Debt/Income',
+                                                  reverse = T,
+                                                  override.aes = 
+                                                    list(alpha = 1, size = 2)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss,
+                            color = LoanOriginationDate)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$BorrowerRate, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T)))
+
+ggplot(data = samp_ldf, aes(BorrowerRate, EstimatedLoss,
+                            color = Term)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$BorrowerRate, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$EstimatedLoss, .99,
+                                         na.rm = T))) +
+  scale_color_gradientn(colors = rainbow(4))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Coloring-Payments}
+#Summary and plots of amount and payments colored by other variables
+ggplot(data = samp_ldf, aes(LoanOriginalAmount, MonthlyLoanPayment,
+                            color = ProsperRating..numeric.)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$LoanOriginalAmount, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$MonthlyLoanPayment, .99,
+                                         na.rm = T))) +
+  scale_color_gradientn(colors = rainbow(4))
+
+ggplot(data = samp_ldf, aes(LoanOriginalAmount, MonthlyLoanPayment,
+                            color = Term)) +
+  geom_point() +
+  scale_x_continuous(lim = c(0, quantile(samp_ldf$LoanOriginalAmount, .99,
+                                         na.rm = T))) +
+  scale_y_continuous(lim = c(0, quantile(samp_ldf$MonthlyLoanPayment, .99,
+                                         na.rm = T))) +
+  scale_color_gradientn(colors = rainbow(4))
+
+ggplot(data = samp_ldf, aes(LoanOriginalAmount, MonthlyLoanPayment,
+                            color = IsLoaner)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set1")
+
+#Plot of prosper rating and credit score colored by rate
+ggplot(data = samp_ldf, aes(ProsperRating..numeric., CreditScoreRangeLower,
+                            color = BorrowerRate)) +
+  geom_point() +
+  scale_y_continuous(limits = c(600, 880)) +
+  scale_color_gradientn(colors = rainbow(4))
+
+```
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. Were there features that strengthened each other in terms of \
+looking at your feature(s) of interest?
+
+### Were there any interesting or surprising interactions between features?
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the \
+strengths and limitations of your model.
+
+------
+
+# Final Plots and Summary
+
+> **Tip**: You've done a lot of exploration and have built up an understanding
+of the structure of and relationships between the variables in your dataset.
+Here, you will select three plots from all of your previous exploration to
+present here as a summary of some of your most interesting findings. Make sure
+that you have refined your selected plots for good titling, axis labels (with
+units), and good aesthetic choices (e.g. color, transparency). After each plot,
+make sure you justify why you chose each plot by describing what it shows.
+
+### Plot One
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+```
+
+### Description One
+
+
+### Plot Two
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+```
+
+### Description Two
+
+
+### Plot Three
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+```
+
+### Description Three
+
+------
+
+# Reflection
+
+> **Tip**: Here's the final step! Reflect on the exploration you performed and
+the insights you found. What were some of the struggles that you went through?
+What went well? What was surprising? Make sure you include an insight into
+future work that could be done with the dataset.
+
+> **Tip**: Don't forget to remove this, and the other **Tip** sections before
+saving your final work and knitting the final report!

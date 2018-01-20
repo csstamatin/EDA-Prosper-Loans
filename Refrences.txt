@@ -1,0 +1,7 @@
+Links
+Many sites were visited to look up an R code or HTML. Only a few are listed here for brevity.
+Udacity.com
+Udacity forums
+Tutorialspoint.com
+Stackoverflow.com
+
